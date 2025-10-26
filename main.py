@@ -1,12 +1,8 @@
 import numpy as np
+from src.data_cleaner import clean_undernourishment
 
 def main():
-    array = np.array([1, 2, 3, 4, 5])
-
-    arrsum = np.sum(array)
-
-    print(f"Array: {array}")
-    print(f"Sum: {arrsum}")
+    clean_undernourishment()
 
 if __name__ == "__main__":
     main()
