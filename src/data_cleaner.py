@@ -1,3 +1,4 @@
+import chardet
 import pandas as pd
 from pathlib import Path
 import re
@@ -106,3 +107,69 @@ def clean_energy_supply_adequacy():
     df_wide.to_csv(output_path, index=False)
 
     print("New clean file saved: ", {output_path})
+
+def poverty():
+    input_path = RAW_DIR / "poverty.csv"
+    output_path = PROCESSED_DIR / "poverty_clean.csv"
+
+    df = pd.read_csv(input_path, header=2, quotechar='"', skip_blank_lines=True)
+    df = df.dropna(axis=1, how='all')
+
+    # Rename columns to match other datasets
+    df.rename(columns={"Country Name": "country_name"}, inplace=True)
+    df.rename(columns={"Country Code": "country_code"}, inplace=True)
+    df.rename(columns={"Indicator Name": "indicator_name"}, inplace=True)
+
+# Count how many years have data per row
+    df["data_count"] = df.drop(columns=["country_name", "indicator_name"]).notna().sum(axis=1)
+
+# Count non-NaN values for each row, only considering year columns
+    year_cols = [c for c in df.columns if isinstance(c, int)]
+    df["data_count"] = df[year_cols].notna().sum(axis=1)
+
+    indicator_data_count = (
+        df.groupby("indicator_name")["data_count"]
+        .sum()
+        .sort_values(ascending=False)
+    )
+
+    print(indicator_data_count)
+
+
+    # Keep relevant indicators
+    # filter_indicators = ["SI.POV.DDAY", "SI.SPR.PCAP"]
+    # df = df[df["Indicator Code"].isin(filter_indicators)]
+
+    # # Select relevant years
+    # cols_to_keep = ["country_name", "country_code", "indicator_name"] + [col for col in df.columns if col.isdigit() and int(col) >= 2000]
+    # df = df[cols_to_keep]
+
+    # print(df)
+
+    
+    PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
+    df.to_csv(output_path, index=False)
+    print("New clean file saved:", output_path)
+
+    print("Hello")
+
+def population():
+    input_path = RAW_DIR / "population.csv"
+    output_path = PROCESSED_DIR / "population_clean.csv"
+
+    df = pd.read_csv(input_path, header=2, quotechar='"', skip_blank_lines=True)
+    df = df.dropna(axis=1, how='all')
+
+
+  # Rename columns to match other datasets
+    df.rename(columns={"Country Name": "country_name"}, inplace=True)
+    df.rename(columns={"Country Code": "country_code"}, inplace=True)
+    df.rename(columns={"Indicator Name": "indicator_name"}, inplace=True)
+
+
+    PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
+    df.to_csv(output_path, index=False)
+    print("New clean file saved:", output_path)
+
+
+    print("Hello2")
