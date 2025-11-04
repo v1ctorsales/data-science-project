@@ -107,7 +107,38 @@ def clean_energy_supply_adequacy():
 
     print("New clean file saved: ", {output_path})
 
-def poverty():
+def clean_food_calories():
+    input_path = RAW_DIR / "food_calories.csv"
+    output_path = PROCESSED_DIR / "food_calories_clean.csv"
+
+    with open(input_path, "r", encoding="utf-8") as f:
+        lines = f.readlines()
+
+    data = []
+    for line in lines:
+        clean_line = line.strip().replace('"', '').split(",")
+        if len(clean_line) >= 3:
+            country, year, value = clean_line[:3]
+            data.append([country.strip(), year.strip(), value.strip()])
+
+    df = pd.DataFrame(data, columns=["country_name", "year", "value"])
+
+    df["year"] = pd.to_numeric(df["year"], errors="coerce")
+    df["value"] = pd.to_numeric(df["value"], errors="coerce")
+
+    df = df.dropna(subset=["country_name", "year", "value"])
+
+    df_wide = df.pivot(index="country_name", columns="year", values="value").reset_index()
+
+    year_cols = sorted([c for c in df_wide.columns if isinstance(c, (int, float))])
+    df_wide = df_wide[["country_name"] + year_cols]
+
+    PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
+    df_wide.to_csv(output_path, index=False)
+
+    print("New clean file saved:", output_path)
+
+def clean_poverty():
     input_path = RAW_DIR / "poverty.csv"
     output_path = PROCESSED_DIR / "poverty_clean.csv"
 
