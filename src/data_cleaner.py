@@ -124,29 +124,26 @@ def poverty():
     df["data_count"] = df.drop(columns=["country_name", "indicator_name"]).notna().sum(axis=1)
 
 # Count non-NaN values for each row, only considering year columns
-    year_cols = [c for c in df.columns if isinstance(c, int)]
-    df["data_count"] = df[year_cols].notna().sum(axis=1)
+    year_cols = [col for col in df.columns if col.isdigit()]
+    df["n_obs"] = df[year_cols].count(axis=1)
 
-    indicator_data_count = (
-        df.groupby("indicator_name")["data_count"]
+    indicator_counts = (
+        df.groupby(["indicator_name", "Indicator Code"])["n_obs"]
         .sum()
-        .sort_values(ascending=False)
+        .reset_index()
+        .sort_values(by="n_obs", ascending=False)
     )
 
-    print(indicator_data_count)
-
+    print(indicator_counts)
 
     # Keep relevant indicators
-    # filter_indicators = ["SI.POV.DDAY", "SI.SPR.PCAP"]
-    # df = df[df["Indicator Code"].isin(filter_indicators)]
+    filter_indicators = ["SI.POV.DDAY"] # (8.30) SI.POV.UMIC  (4.20) SI.POV.LMIC
+    df = df[df["Indicator Code"].isin(filter_indicators)]
 
     # # Select relevant years
-    # cols_to_keep = ["country_name", "country_code", "indicator_name"] + [col for col in df.columns if col.isdigit() and int(col) >= 2000]
-    # df = df[cols_to_keep]
+    cols_to_keep = ["country_name", "country_code", "indicator_name"] + [col for col in df.columns if col.isdigit() and int(col) >= 2000]
+    df = df[cols_to_keep]
 
-    # print(df)
-
-    
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
     df.to_csv(output_path, index=False)
     print("New clean file saved:", output_path)
