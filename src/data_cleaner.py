@@ -1,4 +1,3 @@
-import chardet
 import pandas as pd
 from pathlib import Path
 import re
@@ -134,8 +133,6 @@ def poverty():
         .sort_values(by="n_obs", ascending=False)
     )
 
-    print(indicator_counts)
-
     # Keep relevant indicators
     filter_indicators = ["SI.POV.DDAY"] # (8.30) SI.POV.UMIC  (4.20) SI.POV.LMIC
     df = df[df["Indicator Code"].isin(filter_indicators)]
@@ -148,25 +145,18 @@ def poverty():
     df.to_csv(output_path, index=False)
     print("New clean file saved:", output_path)
 
-    print("Hello")
-
-def population():
+def clean_population():
     input_path = RAW_DIR / "population.csv"
     output_path = PROCESSED_DIR / "population_clean.csv"
 
     df = pd.read_csv(input_path, header=2, quotechar='"', skip_blank_lines=True)
     df = df.dropna(axis=1, how='all')
 
-
   # Rename columns to match other datasets
     df.rename(columns={"Country Name": "country_name"}, inplace=True)
     df.rename(columns={"Country Code": "country_code"}, inplace=True)
     df.rename(columns={"Indicator Name": "indicator_name"}, inplace=True)
 
-
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
     df.to_csv(output_path, index=False)
     print("New clean file saved:", output_path)
-
-
-    print("Hello2")
