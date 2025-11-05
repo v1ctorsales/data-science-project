@@ -191,3 +191,57 @@ def clean_population():
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
     df.to_csv(output_path, index=False)
     print("New clean file saved:", output_path)
+
+def merge_cleaned_data():
+    output_path = PROCESSED_DIR / "all_data_merged.csv"
+
+    # Lista de arquivos limpos para combinar
+    files = [
+        "undernourishment_clean.csv",
+        "consumer_price_index_clean.csv",
+        "energy_supply_adeq_clean.csv",
+        "food_calories_clean.csv",
+        "poverty_clean.csv",
+        "population_clean.csv",
+    ]
+
+    dataframes = []
+    for file in files:
+        path = PROCESSED_DIR / file
+        if not path.exists():
+            print(f"Warning: {file} not found, skipping.")
+            continue
+
+        df = pd.read_csv(path)
+
+        # Garante a existência de 'country_name'
+        if "country_name" not in df.columns:
+            print(f"Warning: {file} does not contain 'country_name', skipping.")
+            continue
+
+        # Mantém apenas colunas numéricas de ano (2001–2025)
+        year_cols = [col for col in df.columns if re.fullmatch(r"\d{4}", str(col)) and int(col) >= 2001]
+        df = df[["country_name"] + year_cols]
+
+        # Adiciona prefixo para evitar colisão de colunas
+        prefix = file.replace("_clean.csv", "")
+        df = df.rename(columns={col: f"{prefix}_{col}" for col in year_cols})
+
+        dataframes.append(df)
+
+    if not dataframes:
+        print("No cleaned files found to merge.")
+        return
+
+    # Faz merge incremental em 'country_name'
+    merged_df = dataframes[0]
+    for df in dataframes[1:]:
+        merged_df = pd.merge(merged_df, df, on="country_name", how="outer")
+
+    # Ordena colunas: primeiro 'country_name', depois anos
+    cols = ["country_name"] + sorted([c for c in merged_df.columns if c != "country_name"])
+    merged_df = merged_df[cols]
+
+    PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
+    merged_df.to_csv(output_path, index=False)
+    print("✅ Merged dataset created:", output_path)
