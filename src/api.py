@@ -90,30 +90,37 @@ def get_latest_data(indicator: str = Query(..., description="Indicator name, e.g
     if not file_path.exists():
         return {"error": f"Dataset for indicator '{indicator}' not found."}
 
+    # === Leitura e limpeza ===
     df = pd.read_csv(file_path)
     df.columns = [str(c).strip().replace(",", "").replace('"', "") for c in df.columns]
     year_cols = [c for c in df.columns if re.fullmatch(r"\d{4}", c)]
+
     if not year_cols:
         return {"error": f"No year columns found in {file_path.name}"}
 
-    valid_year = None
-    for y in sorted(map(int, year_cols), reverse=True):
-        if df[str(y)].notna().any():
-            valid_year = y
-            break
+    # === Para cada país, pegar o último valor não nulo ===
+    latest_records = []
+    for _, row in df.iterrows():
+        values = {y: row[y] for y in year_cols if pd.notna(row[y])}
+        if not values:
+            continue
+        latest_year = max(values.keys(), key=int)
+        latest_value = values[latest_year]
+        latest_records.append({
+            "Country Name": row["country_name"],
+            "Value": latest_value,
+            "Year": int(latest_year)
+        })
 
-    if valid_year is None:
-        return {"error": "No valid year found with data."}
+    if not latest_records:
+        return {"error": "No valid non-null data found."}
 
-    df["Value"] = df[str(valid_year)]
-    df = df[["country_name", "Value"]]
-    df = df.dropna(subset=["Value"])
+    df_latest = pd.DataFrame(latest_records)
+    df_latest = df_latest.sort_values("Country Name").reset_index(drop=True)
 
-    df = df.where(pd.notnull(df), None)
-    df.rename(columns={"country_name": "Country Name"}, inplace=True)
+    print(f"✅ Sent latest data per country for '{indicator}' ({len(df_latest)} records)")
+    return df_latest.to_dict(orient="records")
 
-    print(f"✅ Sent data for indicator '{indicator}' ({valid_year}) with {len(df)} rows")
-    return df.to_dict(orient="records")
 
 
 @app.get("/country")
@@ -153,3 +160,90 @@ def get_country_timeseries(
 
     print(f"📊 Sent time series for '{country}' ({indicator}) with {len(year_cols)} years")
     return [result]
+
+@app.get("/indicators")
+def analyze_indicators(
+    country: str = Query(..., description="Country name (e.g., Brazil)"),
+    indicators: list[str] = Query(..., description="List of indicators (max 2)"),
+):
+    import numpy as np
+    import pandas as pd
+    import re
+
+    if len(indicators) < 2:
+        return {"error": "Please provide at least two indicators for comparison."}
+    if len(indicators) > 2:
+        return {"error": "Only two indicators can be compared at a time."}
+
+    file_map = {
+        "undernourishment": "undernourishment_clean.csv",
+        "food_calories": "food_calories_clean.csv",
+        "energy_supply": "energy_supply_adeq_clean.csv",
+        "poverty": "poverty_clean.csv",
+        "population": "population_clean.csv",
+        "consumer_price_index": "consumer_price_index_clean.csv",
+    }
+
+    dfs = {}
+    for ind in indicators:
+        if ind not in file_map:
+            return {"error": f"Unknown indicator '{ind}'"}
+
+        path = PROCESSED_DIR / file_map[ind]
+        if not path.exists():
+            return {"error": f"Dataset for '{ind}' not found"}
+
+        df = pd.read_csv(path)
+        df.columns = [str(c).strip().replace(",", "").replace('"', "") for c in df.columns]
+        df = df[df["country_name"].str.lower() == country.lower()]
+
+        if df.empty:
+            return {"error": f"No data for '{country}' in '{ind}'"}
+
+        year_cols = [c for c in df.columns if re.fullmatch(r"\d{4}", c)]
+        s = df[year_cols].iloc[0].dropna().astype(float)
+        s.index = s.index.astype(int)
+
+        dfs[ind] = s
+
+    combined = pd.concat(dfs, axis=1)
+    combined.sort_index(inplace=True)
+
+    combined.dropna(how="all", inplace=True)
+
+    combined.interpolate(inplace=True, limit_direction="both")
+
+    if combined.dropna().shape[0] < 3:
+        return {"error": "Not enough valid data to compare these indicators."}
+
+    valid = combined.dropna()
+    corr = float(np.corrcoef(valid[indicators[0]], valid[indicators[1]])[0, 1])
+    trend = "direct" if corr >= 0 else "inverse"
+
+    mean_diff = float(np.mean(np.abs(valid[indicators[0]] - valid[indicators[1]])))
+
+    normalized = (combined - combined.min()) / (combined.max() - combined.min())
+
+    details = {}
+    for ind in indicators:
+        details[ind] = [
+            {
+                "year": int(y),
+                "value": float(combined.loc[y, ind]),
+                "normalized": float(normalized.loc[y, ind]),
+            }
+            for y in combined.index
+        ]
+
+    return {
+        "country": country,
+        "indicators": indicators,
+        "correlation": round(corr, 3),
+        "summary": {
+            "years_overlap": int(valid.shape[0]),
+            "trend": trend,
+            "mean_difference": round(mean_diff, 2),
+        },
+        "details": details,
+    }
+
