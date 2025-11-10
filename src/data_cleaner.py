@@ -6,6 +6,8 @@ BASE_DIR = Path(__file__).resolve().parents[1]
 RAW_DIR = BASE_DIR / "data" / "raw"
 PROCESSED_DIR = BASE_DIR / "data" / "processed"
 
+## ------------------------ Undernourishment ----------------------- ##
+
 def clean_undernourishment():
     input_path = RAW_DIR / "undernourishment.csv"
     output_path = PROCESSED_DIR / "undernourishment_clean.csv"
@@ -22,51 +24,106 @@ def clean_undernourishment():
     df.to_csv(output_path, index=False)
     print("New clean file saved:", output_path)
 
+## ------------------------ Consumer Price Index ----------------------- ##
+
 def clean_consumer_price_index():
     input_path = RAW_DIR / "consumer_price_index.csv"
     output_path = PROCESSED_DIR / "consumer_price_index_clean.csv"
+    output_path1 = PROCESSED_DIR / "inflation_data.csv"
 
+    # Import data 
     df = pd.read_csv(input_path, encoding="utf-8", low_memory=False)
 
-    keep_cols = ["Area", "Item"] + [col for col in df.columns if col.startswith("Y20")]
-    df = df[keep_cols].rename(columns={"Area": "country_name", "Item": "indicator_name"})
+    # Keep relevant columns and rename
+    keep_cols = ["Area", "Item", "Months Code"] + [col for col in df.columns if col.startswith("Y20")]
+    df = df[keep_cols].rename(columns={"Area": "country_name", "Item": "indicator_name", "Months Code": "months_code"})
 
+    # Clean year columns to numeric
     year_cols = [col for col in df.columns if re.fullmatch(r"Y\d{4}", col)]
 
     for c in year_cols:
         df[c] = pd.to_numeric(df[c], errors="coerce")
 
+    # Keep relevant indicators (we only want food indices)
+    filter_indicators = ["Consumer Prices, Food Indices (2015 = 100)"]
+    df = df[df["indicator_name"].isin(filter_indicators)]
+
     df_long = df.melt(
-        id_vars=["country_name", "indicator_name"],
+        id_vars=["country_name", "indicator_name", "months_code"],
         value_vars=year_cols,
         var_name="year",
         value_name="value",
     )
+
     df_long["year"] = df_long["year"].str.extract(r"(\d{4})").astype(int)
     df_long = df_long.dropna(subset=["value"])
 
-    result = (
-        df_long.groupby(["country_name", "indicator_name", "year"], as_index=False)
-        .agg(mean_value=("value", "mean"))
+    df_long = df_long.sort_values(by=['country_name', 'year', 'months_code'])
+
+    # Different computing of Inflation for years previous 2025 and after
+    df_long_25 = df_long[df_long['year'] >= 2025].copy()
+    df_long = df_long[df_long['year'] < 2025].copy()
+    
+    print(df_long_25.head())
+    print(df_long.head())
+
+    # Verifying if shift(12) method will work for this data set 
+    monthly_count = df_long.groupby(['country_name', 'year'])['months_code'].nunique().reset_index()
+    monthly_count = monthly_count.rename(columns={'months_code': 'months_available'})
+    print(monthly_count.head().to_markdown(index=False))
+    monthly_count['Has_12_Months'] = monthly_count['months_available'] == 12
+    incomplete_data = monthly_count[monthly_count['Has_12_Months'] == False]
+
+    if not incomplete_data.empty:
+        print("\n--- Incomplete Country/Year Data Found ---")
+        print(f"Total incomplete records: {len(incomplete_data)}")
+        print("Example incomplete records (First 5):")
+        print(incomplete_data.head().to_markdown(index=False))
+    else:
+        print("\n All Country/Year combinations appear to have 12 unique months of data.")
+
+    # It won't since not all countries have data for the 12 months for each year. From this: 
+        #   Different computing of Inflation for years previous 2025 and after
+        #   shift(12) method won't work here. We need to do a manual merge of the current year data with the lagged year data.
+
+    ## Merge with previous year to compute <=2024 inflation
+    # 1. Prepare the Current DataFrame (P_t)
+    current_df = df_long[['country_name', 'year', 'months_code', 'value']].copy()
+    current_df = current_df.rename(columns={'value': 'CFPI_t'})
+
+    # 2. Prepare the Lagged DataFrame (P_t-12)
+    lagged_df = df_long[['country_name', 'year', 'months_code', 'value']].copy()
+    # Shift the year forward by 1. Define the Lagged Year (T-1)
+    lagged_df['year'] = lagged_df['year'] + 1 
+    lagged_df = lagged_df.rename(columns={'value': 'CFPI_t_minus_12'})
+
+    # Merge the two dataframes based on three conditions:
+    # 1. Same Country Name
+    # 2. Same Month Code (e.g., 7001 for January)
+    # 3. Current Year = Lagged Year (e.g., Year 2022 matched with Lagged Year 2022)
+    inflation_data = pd.merge(
+        current_df,
+        lagged_df,
+        on=['country_name', 'year', 'months_code'],
+        how='left' # Use 'left' to keep all current data points
     )
 
-    result = result[(result["year"] >= 2000) & (result["year"] <= 2025)]
+    # 3. Calculate the Year-over-Year Inflation Rate using the joined columns (CFPI_t)
+    inflation_data['Inflation_Rate'] = (
+        inflation_data['CFPI_t'] / inflation_data['CFPI_t_minus_12'] - 1
+    ) * 100
 
-    result_wide = result.pivot(
-        index=["country_name", "indicator_name"],
-        columns="year",
-        values="mean_value",
-    ).reset_index()
+    # Remove rows where inflation couldn't be calculated (i.e., the first 12 months of the series)
+    inflation_data = inflation_data.dropna(subset=['Inflation_Rate']).copy()
 
-    result_wide.columns.name = None
-
-    non_year_cols = ["country_name", "indicator_name"]
-    year_cols = sorted([c for c in result_wide.columns if isinstance(c, int)])
-    result_wide = result_wide[non_year_cols + year_cols]
-
+    # Manual verification 
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
-    result_wide.to_csv(output_path, index=False)
-    print("New clean file saved: ", {output_path})
+    inflation_data.to_csv(output_path1, index=False) 
+    print("New clean file saved:", output_path)
+
+
+
+## ------------------------ Energy Supply Adequacy ----------------------- ##
 
 def clean_energy_supply_adequacy():
     input_path = RAW_DIR / "energy_supply_adeq.csv"
@@ -107,6 +164,8 @@ def clean_energy_supply_adequacy():
 
     print("New clean file saved: ", {output_path})
 
+## ------------------------ Food Calories ----------------------- ##
+
 def clean_food_calories():
     input_path = RAW_DIR / "food_calories.csv"
     output_path = PROCESSED_DIR / "food_calories_clean.csv"
@@ -137,6 +196,8 @@ def clean_food_calories():
     df_wide.to_csv(output_path, index=False)
 
     print("New clean file saved:", output_path)
+
+## ------------------------ Poverty ----------------------- ##
 
 def clean_poverty():
     input_path = RAW_DIR / "poverty.csv"
@@ -176,6 +237,9 @@ def clean_poverty():
     df.to_csv(output_path, index=False)
     print("New clean file saved:", output_path)
 
+
+## ------------------------ Population ----------------------- ##
+
 def clean_population():
     input_path = RAW_DIR / "population.csv"
     output_path = PROCESSED_DIR / "population_clean.csv"
@@ -192,6 +256,26 @@ def clean_population():
     df.to_csv(output_path, index=False)
     print("New clean file saved:", output_path)
 
+def clean_gdp_percapita():
+    input_path = RAW_DIR / "gdp_percapita.csv"
+    output_path = PROCESSED_DIR / "gdp_percapita_clean.csv"
+
+    df = pd.read_csv(input_path, header=2, quotechar='"', skip_blank_lines=True)
+    df = df.dropna(axis=1, how='all')
+    df = df.dropna(how='all')
+
+  # Rename columns to match other datasets
+    df.rename(columns={"Country Name": "country_name"}, inplace=True)
+    df.rename(columns={"Country Code": "country_code"}, inplace=True)
+    df.rename(columns={"Indicator Name": "indicator_name"}, inplace=True)
+
+    PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
+    df.to_csv(output_path, index=False)
+    print("New clean file saved:", output_path)
+
+
+## ------------------------ Merge Cleaned Data ----------------------- ##
+
 def merge_cleaned_data():
     output_path = PROCESSED_DIR / "all_data_merged.csv"
 
@@ -203,6 +287,7 @@ def merge_cleaned_data():
         "food_calories_clean.csv",
         "poverty_clean.csv",
         "population_clean.csv",
+        "gdp_percapita.csv"
     ]
 
     dataframes = []
