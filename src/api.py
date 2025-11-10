@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import pandas as pd
 from pathlib import Path
 import re
+import numpy as np
 
 app = FastAPI(title="Data Science Project API")
 
@@ -166,9 +167,6 @@ def analyze_indicators(
     country: str = Query(..., description="Country name (e.g., Brazil)"),
     indicators: list[str] = Query(..., description="List of indicators (max 2)"),
 ):
-    import numpy as np
-    import pandas as pd
-    import re
 
     if len(indicators) < 2:
         return {"error": "Please provide at least two indicators for comparison."}
