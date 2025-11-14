@@ -1,11 +1,33 @@
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import pandas as pd
 from pathlib import Path
 import re
 import numpy as np
 
+
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+
+
 app = FastAPI(title="Data Science Project API")
+
+def real_ip(request: Request):
+    return request.headers.get("X-Forwarded-For", request.client.host)
+
+limiter = Limiter(key_func=real_ip)
+
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded,
+    lambda request, exc: JSONResponse(
+        status_code=429,
+        content={"detail": "Too many requests, slow down."}
+    )
+)
+app.add_middleware(SlowAPIMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
@@ -20,12 +42,15 @@ PROCESSED_DIR = BASE_DIR / "data" / "processed"
 
 
 @app.get("/")
-def root():
+@limiter.limit("40/minute")
+def root(request: Request):
     return {"message": "Welcome to the Data Science Project API"}
 
 
 @app.get("/data/{dataset}")
+@limiter.limit("40/minute")
 def get_dataset(
+    request: Request,
     dataset: str,
     country: str | None = Query(None, description="Country name (e.g., Brazil)"),
     start_year: int | None = Query(None, description="Start year (e.g., 2005)"),
@@ -64,7 +89,8 @@ def get_dataset(
 
 
 @app.get("/countries")
-def get_countries():
+@limiter.limit("40/minute")
+def get_countries(request: Request):
     file_path = PROCESSED_DIR / "all_data_merged.csv"
     if not file_path.exists():
         return {"error": "Merged dataset not found."}
@@ -74,7 +100,8 @@ def get_countries():
 
 
 @app.get("/latest")
-def get_latest_data(indicator: str = Query(..., description="Indicator name, e.g. 'undernourishment'")):
+@limiter.limit("40/minute")
+def get_latest_data(request: Request, indicator: str = Query(..., description="Indicator name, e.g. 'undernourishment'")):
     file_map = {
         "undernourishment": "undernourishment_clean.csv",
         "food_calories": "food_calories_clean.csv",
@@ -125,7 +152,9 @@ def get_latest_data(indicator: str = Query(..., description="Indicator name, e.g
 
 
 @app.get("/country")
+@limiter.limit("40/minute")
 def get_country_timeseries(
+    request: Request,
     indicator: str = Query(..., description="Indicator name, e.g. 'undernourishment'"),
     country: str = Query(..., description="Country name, e.g. 'Brazil'")
 ):
@@ -163,7 +192,9 @@ def get_country_timeseries(
     return [result]
 
 @app.get("/indicators")
+@limiter.limit("40/minute")
 def analyze_indicators(
+    request: Request,
     country: str = Query(..., description="Country name (e.g., Brazil)"),
     indicators: list[str] = Query(..., description="List of indicators (max 2)"),
 ):
