@@ -238,9 +238,11 @@ def analyze_indicators(
     combined = pd.concat(dfs, axis=1)
     combined.sort_index(inplace=True)
 
+    combined = combined[combined.index >= 2001]
+
     combined.dropna(how="all", inplace=True)
 
-    combined.interpolate(inplace=True, limit_direction="both")
+    combined = combined.dropna(how="all")
 
     if combined.dropna().shape[0] < 3:
         return {"error": "Not enough valid data to compare these indicators."}
@@ -255,14 +257,20 @@ def analyze_indicators(
 
     details = {}
     for ind in indicators:
-        details[ind] = [
-            {
+        details[ind] = []
+        for y in combined.index:
+            val = combined.loc[y, ind]
+            norm = normalized.loc[y, ind]
+
+            # Convert NaN → None
+            val = None if pd.isna(val) else float(val)
+            norm = None if pd.isna(norm) else float(norm)
+
+            details[ind].append({
                 "year": int(y),
-                "value": float(combined.loc[y, ind]),
-                "normalized": float(normalized.loc[y, ind]),
-            }
-            for y in combined.index
-        ]
+                "value": val,
+                "normalized": norm,
+            })
 
     return {
         "country": country,
