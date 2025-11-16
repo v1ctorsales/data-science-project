@@ -30,6 +30,10 @@ def clean_consumer_price_index():
     input_path = RAW_DIR / "consumer_price_index.csv"
     output_path = PROCESSED_DIR / "consumer_price_index_clean.csv"
     output_path1 = PROCESSED_DIR / "inflation_data.csv"
+    output_path2 = PROCESSED_DIR / "mean_inflation_rate.csv"
+    output_path3 = PROCESSED_DIR / "max_inflation_shock.csv"
+    output_path4 = PROCESSED_DIR / "2025_mean_inflation.csv"
+    output_path5 = PROCESSED_DIR / "2025_max_inflation_shock.csv"
 
     # Import data 
     df = pd.read_csv(input_path, encoding="utf-8", low_memory=False)
@@ -60,12 +64,6 @@ def clean_consumer_price_index():
 
     df_long = df_long.sort_values(by=['country_name', 'year', 'months_code'])
 
-    # Different computing of Inflation for years previous 2025 and after
-    df_long_25 = df_long[df_long['year'] >= 2025].copy()
-    df_long = df_long[df_long['year'] < 2025].copy()
-    
-    print(df_long_25.head())
-    print(df_long.head())
 
     # Verifying if shift(12) method will work for this data set 
     monthly_count = df_long.groupby(['country_name', 'year'])['months_code'].nunique().reset_index()
@@ -84,23 +82,23 @@ def clean_consumer_price_index():
 
     # It won't since not all countries have data for the 12 months for each year. From this: 
         #   Different computing of Inflation for years previous 2025 and after
-        #   shift(12) method won't work here. We need to do a manual merge of the current year data with the lagged year data.
+        #   We need to do a manual merge of the current year data with the lagged year data.
 
     ## Merge with previous year to compute <=2024 inflation
-    # 1. Prepare the Current DataFrame (P_t)
+    # 1. Prepare the current dataframe (P_t)
     current_df = df_long[['country_name', 'year', 'months_code', 'value']].copy()
     current_df = current_df.rename(columns={'value': 'CFPI_t'})
 
-    # 2. Prepare the Lagged DataFrame (P_t-12)
+    # 2. Prepare the lagged dataframe (P_t-12)
     lagged_df = df_long[['country_name', 'year', 'months_code', 'value']].copy()
-    # Shift the year forward by 1. Define the Lagged Year (T-1)
+    # Shift the year forward by 1. Define the lagged Year (T-1)
     lagged_df['year'] = lagged_df['year'] + 1 
     lagged_df = lagged_df.rename(columns={'value': 'CFPI_t_minus_12'})
 
     # Merge the two dataframes based on three conditions:
-    # 1. Same Country Name
-    # 2. Same Month Code (e.g., 7001 for January)
-    # 3. Current Year = Lagged Year (e.g., Year 2022 matched with Lagged Year 2022)
+    # - Same country name
+    # - Same month code (e.g., 7001 for January)
+    # - Current year = lagged year (e.g., year 2022 matched with lagged year 2022)
     inflation_data = pd.merge(
         current_df,
         lagged_df,
@@ -108,19 +106,126 @@ def clean_consumer_price_index():
         how='left' # Use 'left' to keep all current data points
     )
 
-    # 3. Calculate the Year-over-Year Inflation Rate using the joined columns (CFPI_t)
-    inflation_data['Inflation_Rate'] = (
+    # 3. Calculate the year-over-year inflation_rate  using the joined columns (CFPI_t)
+    inflation_data['inflation_rate'] = (
         inflation_data['CFPI_t'] / inflation_data['CFPI_t_minus_12'] - 1
     ) * 100
 
     # Remove rows where inflation couldn't be calculated (i.e., the first 12 months of the series)
-    inflation_data = inflation_data.dropna(subset=['Inflation_Rate']).copy()
+    inflation_data = inflation_data.dropna(subset=['inflation_rate']).copy()
 
-    # Manual verification 
+    # Export dataset for manual validation 
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
     inflation_data.to_csv(output_path1, index=False) 
     print("New clean file saved:", output_path)
 
+    # Different treatment for 2025
+    historical_inflation = inflation_data[inflation_data['year'] <= 2024].copy()
+    current_inflation_2025 = inflation_data[inflation_data['year'] == 2025].copy()
+
+    # A. Aggregate historical data (2000-2024)
+
+    annual_historical_features = historical_inflation.groupby(['country_name', 'year'])['inflation_rate'].agg(
+        lag_mean_food_inflation = 'mean',
+        lag_max_food_shock = 'max'
+    ).reset_index()
+
+    # Crucial lagging: shift the features from T-1 to align with PoU in T: a shock in 2023 predicts PoU in 2024
+    annual_historical_features['year'] = annual_historical_features['year'] + 1
+    annual_historical_features = annual_historical_features.rename(columns={'year': 'PoU_Target_Year'})
+
+    # Pivot to wide format for model training
+    mean_annual_hist_feat= annual_historical_features[['country_name', 'PoU_Target_Year', 'lag_mean_food_inflation']].copy()
+    mean_annual_hist_feat["indicator_name"] = "Mean Food Inflation Rate"
+    
+    max_annual_hist_feat= annual_historical_features[['country_name', 'PoU_Target_Year', 'lag_max_food_shock']].copy()
+    max_annual_hist_feat["indicator_name"] = "Max Food Inflation Shock"
+
+    mean_annual_hist_feat_w = mean_annual_hist_feat.pivot(
+        index=["country_name", "indicator_name"],
+        columns="PoU_Target_Year",
+        values="lag_mean_food_inflation"
+    ).reset_index()
+
+    max_annual_hist_feat_w = max_annual_hist_feat.pivot(
+        index=["country_name", "indicator_name"],
+        columns="PoU_Target_Year",
+        values="lag_max_food_shock"
+    ).reset_index()
+
+    print("\n--- Annual Historical Features Wide Format ---")
+    print(mean_annual_hist_feat_w.head().to_markdown(index=False))
+    print(max_annual_hist_feat_w.head().to_markdown(index=False))
+    # annual_historical_features_wide.columns.name = None
+
+    # non_year_cols = ["country_name", "indicator_name"]
+    # year_cols = sorted([c for c in annual_historical_features_wide.columns if isinstance(c, int)])
+    # annual_historical_features_wide = annual_historical_features_wide[non_year_cols + year_cols]
+
+    PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
+    mean_annual_hist_feat_w.to_csv(output_path2, index=False)
+    print("New clean file saved: ", {output_path2})
+
+    PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
+    max_annual_hist_feat_w.to_csv(output_path3, index=False)
+    print("New clean file saved: ", {output_path3})
+
+    # ----------------- B. Repeat but with current data - 2025
+
+    # Get the single, latest monthly rate for each country in 2025
+    current_inflation_2025 = current_inflation_2025.sort_values(
+        by=['country_name', 'year', 'months_code'], ascending=True
+    )
+
+
+    annual_2025_features = current_inflation_2025.groupby(['country_name']).tail(1).reset_index(drop=True)
+
+    annual_2025_features = annual_2025_features[['country_name', 'year', 'inflation_rate']].copy()
+
+    # Lagging: 2025 features will predict the 2026 PoU outcome 
+    annual_2025_features['year'] = annual_2025_features['year'] + 1 
+    annual_2025_features = annual_2025_features.rename(columns={
+        'year': 'PoU_Target_Year',
+        # CRITICAL: We rename the 'inflation_rate' to match the training feature name
+        'inflation_rate': 'lag_mean_food_inflation' 
+    })
+
+    # Add a placeholder for the Max Shock feature (since the model needs it)
+    # We use the Latest YoY rate as a proxy for both mean and max shock for this incomplete year
+    # annual_2025_features['lag_max_food_shock'] = annual_2025_features['lag_mean_food_inflation']
+
+    print("\n--- 2025 Annualized Features (Ready for 2026 Forecast) ---")
+    print(annual_2025_features.head().to_markdown(index=False))
+
+        # Pivot to wide format for model training
+    mean_annual_2025_feat= annual_2025_features[['country_name', 'PoU_Target_Year', 'lag_mean_food_inflation']].copy()
+    mean_annual_2025_feat["indicator_name"] = "Mean Food Inflation Rate"
+    
+    max_annual_2025_feat= annual_2025_features[['country_name', 'PoU_Target_Year', 'lag_max_food_shock']].copy()
+    max_annual_2025_feat["indicator_name"] = "Max Food Inflation Shock"
+
+    mean_annual_2025_feat_w = mean_annual_2025_feat.pivot(
+        index=["country_name", "indicator_name"],
+        columns="PoU_Target_Year",
+        values="lag_mean_food_inflation"
+    ).reset_index()
+
+    max_annual_2025_feat_w = max_annual_2025_feat.pivot(
+        index=["country_name", "indicator_name"],
+        columns="PoU_Target_Year",
+        values="lag_max_food_shock"
+    ).reset_index()
+
+    PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
+    mean_annual_2025_feat_w.to_csv(output_path4, index=False)
+    print("New clean file saved: ", {output_path4})
+
+    PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
+    max_annual_2025_feat_w.to_csv(output_path5, index=False)
+    print("New clean file saved: ", {output_path5})
+
+    print(historical_inflation)
+    print(current_inflation_2025)
 
 
 ## ------------------------ Energy Supply Adequacy ----------------------- ##
@@ -274,7 +379,7 @@ def clean_gdp_percapita():
     print("New clean file saved:", output_path)
 
 
-## ------------------------ Merge Cleaned Data ----------------------- ##
+## ------------------------ Merge Cleaned Data - training ----------------------- ##
 
 def merge_cleaned_data():
     output_path = PROCESSED_DIR / "all_data_merged.csv"
@@ -282,12 +387,13 @@ def merge_cleaned_data():
     # Lista de arquivos limpos para combinar
     files = [
         "undernourishment_clean.csv",
-        "consumer_price_index_clean.csv",
+        "mean_inflation_rate.csv",
+        "max_inflation_shock.csv",
         "energy_supply_adeq_clean.csv",
         "food_calories_clean.csv",
         "poverty_clean.csv",
         "population_clean.csv",
-        "gdp_percapita.csv"
+        "gdp_percapita_clean.csv", 
     ]
 
     dataframes = []
