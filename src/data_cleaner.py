@@ -5,6 +5,9 @@ import re
 BASE_DIR = Path(__file__).resolve().parents[1]
 RAW_DIR = BASE_DIR / "data" / "raw"
 PROCESSED_DIR = BASE_DIR / "data" / "processed"
+CROSSWALK = BASE_DIR / "data" / "auxiliary" / "crosswalk_countrynames"
+
+crosswalk = pd.read_csv(CROSSWALK) 
 
 ## ------------------------ Undernourishment ----------------------- ##
 
@@ -14,8 +17,9 @@ def clean_undernourishment():
 
     df = pd.read_csv(input_path, skiprows=4)
     df.rename(columns={"Country Name": "country_name"}, inplace=True)
+    df.rename(columns={"Country Code": "country_code"}, inplace=True)
 
-    cols_to_keep = ["country_name"] + [col for col in df.columns if col.isdigit() and int(col) >= 2001]
+    cols_to_keep = ["country_name", "country_code"] + [col for col in df.columns if col.isdigit() and int(col) >= 2001]
     df = df[cols_to_keep]
     df = df.dropna(how="all", subset=[col for col in df.columns if col != "country_name"])
     df["country_name"] = df["country_name"].str.strip()
@@ -32,8 +36,10 @@ def clean_consumer_price_index():
     output_path1 = PROCESSED_DIR / "inflation_data.csv"
     output_path2 = PROCESSED_DIR / "mean_inflation_rate.csv"
     output_path3 = PROCESSED_DIR / "max_inflation_shock.csv"
-    output_path4 = PROCESSED_DIR / "2025_mean_inflation.csv"
-    output_path5 = PROCESSED_DIR / "2025_max_inflation_shock.csv"
+    output_path4 = PROCESSED_DIR / "2025_inflation_rate.csv"
+
+
+### 1. Load and initial cleaning
 
     # Import data 
     df = pd.read_csv(input_path, encoding="utf-8", low_memory=False)
@@ -64,6 +70,7 @@ def clean_consumer_price_index():
 
     df_long = df_long.sort_values(by=['country_name', 'year', 'months_code'])
 
+### 2. Compute inflation rate
 
     # Verifying if shift(12) method will work for this data set 
     monthly_count = df_long.groupby(['country_name', 'year'])['months_code'].nunique().reset_index()
@@ -83,6 +90,7 @@ def clean_consumer_price_index():
     # It won't since not all countries have data for the 12 months for each year. From this: 
         #   Different computing of Inflation for years previous 2025 and after
         #   We need to do a manual merge of the current year data with the lagged year data.
+
 
     ## Merge with previous year to compute <=2024 inflation
     # 1. Prepare the current dataframe (P_t)
@@ -106,6 +114,7 @@ def clean_consumer_price_index():
         how='left' # Use 'left' to keep all current data points
     )
 
+    
     # 3. Calculate the year-over-year inflation_rate  using the joined columns (CFPI_t)
     inflation_data['inflation_rate'] = (
         inflation_data['CFPI_t'] / inflation_data['CFPI_t_minus_12'] - 1
@@ -119,11 +128,17 @@ def clean_consumer_price_index():
     inflation_data.to_csv(output_path1, index=False) 
     print("New clean file saved:", output_path)
 
-    # Different treatment for 2025
+### A. Aggregate historical data (2000-2024)
+
+    # ----------------- A.  HISTORICAL data - Different treatment for 2025
+
+    ## Dividing the data into historical (full years) and current (incomplete year 2025)
     historical_inflation = inflation_data[inflation_data['year'] <= 2024].copy()
     current_inflation_2025 = inflation_data[inflation_data['year'] == 2025].copy()
 
-    # A. Aggregate historical data (2000-2024)
+    print(f"Historical Data (Full Years) separated: {len(historical_inflation)} rows.")
+    print(f"Forecast Data (2025 Incomplete Year) separated: {len(current_inflation_2025)} rows.")
+
 
     annual_historical_features = historical_inflation.groupby(['country_name', 'year'])['inflation_rate'].agg(
         lag_mean_food_inflation = 'mean',
@@ -134,7 +149,6 @@ def clean_consumer_price_index():
     annual_historical_features['year'] = annual_historical_features['year'] + 1
     annual_historical_features = annual_historical_features.rename(columns={'year': 'PoU_Target_Year'})
 
-    # Pivot to wide format for model training
     mean_annual_hist_feat= annual_historical_features[['country_name', 'PoU_Target_Year', 'lag_mean_food_inflation']].copy()
     mean_annual_hist_feat["indicator_name"] = "Mean Food Inflation Rate"
     
@@ -153,20 +167,15 @@ def clean_consumer_price_index():
         values="lag_max_food_shock"
     ).reset_index()
 
-    print("\n--- Annual Historical Features Wide Format ---")
-    print(mean_annual_hist_feat_w.head().to_markdown(index=False))
-    print(max_annual_hist_feat_w.head().to_markdown(index=False))
     # annual_historical_features_wide.columns.name = None
 
     # non_year_cols = ["country_name", "indicator_name"]
     # year_cols = sorted([c for c in annual_historical_features_wide.columns if isinstance(c, int)])
     # annual_historical_features_wide = annual_historical_features_wide[non_year_cols + year_cols]
 
-    PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
     mean_annual_hist_feat_w.to_csv(output_path2, index=False)
     print("New clean file saved: ", {output_path2})
 
-    PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
     max_annual_hist_feat_w.to_csv(output_path3, index=False)
     print("New clean file saved: ", {output_path3})
 
@@ -177,12 +186,17 @@ def clean_consumer_price_index():
         by=['country_name', 'year', 'months_code'], ascending=True
     )
 
+    # Filter the 2025 data to include ONLY the June inflation rate
+    jun_code = 7006
+    annual_2025_features = current_inflation_2025[
+        (current_inflation_2025['months_code'] == jun_code)
+    ].copy()
 
-    annual_2025_features = current_inflation_2025.groupby(['country_name']).tail(1).reset_index(drop=True)
+    print(annual_2025_features.head(20))
 
     annual_2025_features = annual_2025_features[['country_name', 'year', 'inflation_rate']].copy()
 
-    # Lagging: 2025 features will predict the 2026 PoU outcome 
+    # Lagging: 2025 features will predict the 2026 PoU outcome. This will be done with the snapshot of June 2025 inflation 
     annual_2025_features['year'] = annual_2025_features['year'] + 1 
     annual_2025_features = annual_2025_features.rename(columns={
         'year': 'PoU_Target_Year',
@@ -191,41 +205,24 @@ def clean_consumer_price_index():
     })
 
     # Add a placeholder for the Max Shock feature (since the model needs it)
-    # We use the Latest YoY rate as a proxy for both mean and max shock for this incomplete year
-    # annual_2025_features['lag_max_food_shock'] = annual_2025_features['lag_mean_food_inflation']
+    # We use the Latest mean inflation rate as a proxy for both mean and max shock for this incomplete year
+    annual_2025_features['lag_max_food_shock'] = annual_2025_features['lag_mean_food_inflation']
 
     print("\n--- 2025 Annualized Features (Ready for 2026 Forecast) ---")
     print(annual_2025_features.head().to_markdown(index=False))
 
-        # Pivot to wide format for model training
-    mean_annual_2025_feat= annual_2025_features[['country_name', 'PoU_Target_Year', 'lag_mean_food_inflation']].copy()
-    mean_annual_2025_feat["indicator_name"] = "Mean Food Inflation Rate"
-    
-    max_annual_2025_feat= annual_2025_features[['country_name', 'PoU_Target_Year', 'lag_max_food_shock']].copy()
-    max_annual_2025_feat["indicator_name"] = "Max Food Inflation Shock"
+    ## Wide format for export
+    annual_2025_features= annual_2025_features[['country_name', 'PoU_Target_Year', 'lag_mean_food_inflation']].copy()
+    annual_2025_features["indicator_name"] = "Mean Food Inflation Shock"
 
-    mean_annual_2025_feat_w = mean_annual_2025_feat.pivot(
+    annual_2025_features_w = annual_2025_features.pivot(
         index=["country_name", "indicator_name"],
         columns="PoU_Target_Year",
         values="lag_mean_food_inflation"
     ).reset_index()
 
-    max_annual_2025_feat_w = max_annual_2025_feat.pivot(
-        index=["country_name", "indicator_name"],
-        columns="PoU_Target_Year",
-        values="lag_max_food_shock"
-    ).reset_index()
-
-    PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
-    mean_annual_2025_feat_w.to_csv(output_path4, index=False)
+    annual_2025_features_w.to_csv(output_path4, index=False)
     print("New clean file saved: ", {output_path4})
-
-    PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
-    max_annual_2025_feat_w.to_csv(output_path5, index=False)
-    print("New clean file saved: ", {output_path5})
-
-    print(historical_inflation)
-    print(current_inflation_2025)
 
 
 ## ------------------------ Energy Supply Adequacy ----------------------- ##
@@ -264,6 +261,12 @@ def clean_energy_supply_adequacy():
     year_cols = sorted([c for c in df_wide.columns if isinstance(c, int)])
     df_wide = df_wide[["country_name"] + year_cols]
 
+    df_wide = df_wide.merge(
+    crosswalk,
+    on='country_name', 
+    how='left'  # Critical: Keeps all rows from df_data
+)
+
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
     df_wide.to_csv(output_path, index=False)
 
@@ -285,17 +288,17 @@ def clean_food_calories():
             country, year, value = clean_line[:3]
             data.append([country.strip(), year.strip(), value.strip()])
 
-    df = pd.DataFrame(data, columns=["country_name", "year", "value"])
+    df = pd.DataFrame(data, columns=["country_name", "country_code", "year", "value"])
 
     df["year"] = pd.to_numeric(df["year"], errors="coerce")
     df["value"] = pd.to_numeric(df["value"], errors="coerce")
 
-    df = df.dropna(subset=["country_name", "year", "value"])
+    df = df.dropna(subset=["country_name", "country_code", "year", "value"])
 
-    df_wide = df.pivot(index="country_name", columns="year", values="value").reset_index()
+    df_wide = df.pivot(index=["country_name", "country_code"], columns="year", values="value").reset_index()
 
     year_cols = sorted([c for c in df_wide.columns if isinstance(c, (int, float))])
-    df_wide = df_wide[["country_name"] + year_cols]
+    df_wide = df_wide[["country_name", "country_code"] + year_cols]
 
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
     df_wide.to_csv(output_path, index=False)
@@ -357,9 +360,12 @@ def clean_population():
     df.rename(columns={"Country Code": "country_code"}, inplace=True)
     df.rename(columns={"Indicator Name": "indicator_name"}, inplace=True)
 
+
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
     df.to_csv(output_path, index=False)
     print("New clean file saved:", output_path)
+
+## ------------------------ GDP per capita ----------------------- ##
 
 def clean_gdp_percapita():
     input_path = RAW_DIR / "gdp_percapita.csv"
@@ -374,12 +380,14 @@ def clean_gdp_percapita():
     df.rename(columns={"Country Code": "country_code"}, inplace=True)
     df.rename(columns={"Indicator Name": "indicator_name"}, inplace=True)
 
+    df = df.drop()
+
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
     df.to_csv(output_path, index=False)
     print("New clean file saved:", output_path)
 
 
-## ------------------------ Merge Cleaned Data - training ----------------------- ##
+## ------------------------ Merge Cleaned Data ----------------------- ##
 
 def merge_cleaned_data():
     output_path = PROCESSED_DIR / "all_data_merged.csv"
@@ -387,13 +395,11 @@ def merge_cleaned_data():
     # Lista de arquivos limpos para combinar
     files = [
         "undernourishment_clean.csv",
-        "mean_inflation_rate.csv",
-        "max_inflation_shock.csv",
         "energy_supply_adeq_clean.csv",
         "food_calories_clean.csv",
         "poverty_clean.csv",
         "population_clean.csv",
-        "gdp_percapita_clean.csv", 
+        "gdp_percapita.csv"
     ]
 
     dataframes = []
@@ -427,12 +433,131 @@ def merge_cleaned_data():
     # Faz merge incremental em 'country_name'
     merged_df = dataframes[0]
     for df in dataframes[1:]:
-        merged_df = pd.merge(merged_df, df, on="country_name", how="outer")
+        merged_df = pd.merge(merged_df, df, on=["country_name", "country_code"], how="outer")
 
     # Ordena colunas: primeiro 'country_name', depois anos
     cols = ["country_name"] + sorted([c for c in merged_df.columns if c != "country_name"])
     merged_df = merged_df[cols]
 
+
+# The expanded, consolidated list of entities to exclude from country-level analysis.
+    entities_to_remove = [
+    # --- World Bank Aggregates (Regions, Income Groups, Lending Status) ---
+    'Africa Eastern and Southern', 'Africa Western and Central', 'Arab World',
+    'Central Europe and the Baltics', 'Caribbean small states', 'East Asia & Pacific',
+    'Europe & Central Asia', 'Euro area', 'European Union',
+    'Fragile and conflict affected situations', 'Heavily indebted poor countries (HIPC)',
+    'High income', 'IBRD only', 'IDA & IBRD total', 'IDA blend', 'IDA total',
+    'IDA only', 'Latin America & Caribbean',
+    'Least developed countries: UN classification', 'Low income',
+    'Lower middle income', 'Low & middle income',
+    'Middle East, North Africa, Afghanistan & Pakistan', 'Middle income',
+    'North America', 'OECD members', 'Other small states', 'South Asia',
+    'Sub-Saharan Africa', 'Small states', 'World',
+
+    # --- Historical/Dissolved Entities ---
+    'USSR', 'Czechoslovakia', 'Yugoslavia', 'Serbia and Montenegro',
+    'Ethiopia (former)', 'Sudan (former)', 'Netherlands Antilles',
+
+    # --- FAO Aggregates (Regions, Economic Groups) ---
+    'Africa', 'Africa (FAO)', 'Americas (FAO)', 'Asia', 'Asia (FAO)',
+    'Belgium-Luxembourg (FAO)', 'Caribbean (FAO)', 'Central America (FAO)',
+    'Central Asia (FAO)', 'Eastern Africa (FAO)', 'Eastern Asia (FAO)',
+    'Eastern Europe (FAO)', 'Europe', 'Europe (FAO)', 'European Union (27)',
+    'European Union (27) (FAO)', 'High-income countries', 'Land Locked Developing Countries (FAO)',
+    'Least Developed Countries (FAO)', 'Low Income Food Deficit Countries (FAO)',
+    'Low-income countries', 'Lower-middle-income countries', 'Micronesia (FAO)',
+    'Middle Africa (FAO)', 'Net Food Importing Developing Countries (FAO)',
+    'Northern Africa (FAO)', 'Northern America (FAO)', 'Northern Europe (FAO)',
+    'Oceania', 'Oceania (FAO)', 'Small Island Developing States (FAO)',
+    'South America', 'South America (FAO)', 'South-eastern Asia (FAO)',
+    'Southern Africa (FAO)', 'Southern Asia (FAO)', 'Southern Europe (FAO)',
+    'Upper-middle-income countries', 'Western Africa (FAO)',
+    'Western Asia (FAO)', 'Western Europe (FAO)', 'Not classified',
+
+    # --- WB/FAO Aggregates (IDA/IBRD groupings) ---
+    'Latin America & the Caribbean (IDA & IBRD countries)',
+    'Middle East, North Africa, Afghanistan & Pakistan (IDA & IBRD)',
+    'South Asia (IDA & IBRD)',
+    'Sub-Saharan Africa (IDA & IBRD countries)',
+    'East Asia & Pacific (IDA & IBRD countries)',
+    'Europe & Central Asia (IDA & IBRD countries)', 
+    'East Asia & Pacific (excluding high income)',
+    'Early-demographic dividend',
+    'Europe & Central Asia (excluding high income)', 
+    'Late-demographic dividend',
+    'Latin America & Caribbean (excluding high income)',
+    'Middle East, North Africa, Afghanistan & Pakistan (excluding high income)',
+    'Pre-demographic dividend',
+    'Pacific island small states',
+    'Post-demographic dividend',
+    'Sub-Saharan Africa (excluding high income)',
+    'Upper middle income'
+    ]
+    
+    # Use the list of names to drop the known aggregates/historical entities
+    merged_df = merged_df[~merged_df['country_name'].isin(entities_to_remove)].copy()
+
+    # Finally, drop any remaining rows that still do not have an ISO_Code (NaN)
+    # merged_df.dropna(subset=['ISO_Code'], inplace=True)
+
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
     merged_df.to_csv(output_path, index=False)
     print("✅ Merged dataset created:", output_path)
+
+
+    # 'Africa Eastern and Southern', 'Africa Western and Central', 'Arab World', 
+    # 'Central Europe and the Baltics', 'Caribbean small states', 'East Asia & Pacific', 
+    # 'Europe & Central Asia', 'Euro area', 'European Union', 
+    # 'Fragile and conflict affected situations', 'Heavily indebted poor countries (HIPC)', 
+    # 'High income', 'IBRD only', 'IDA & IBRD total', 'IDA blend', 'IDA total', 
+    # 'IDA only', 'Latin America & Caribbean', 
+    # 'Least developed countries: UN classification', 'Low income', 
+    # 'Lower middle income', 'Low & middle income', 
+    # 'Middle East, North Africa, Afghanistan & Pakistan', 'Middle income', 
+    # 'North America', 'OECD members', 'Other small states', 'South Asia', 
+    # 'Sub-Saharan Africa', 'Small states', 'World', 'USSR', 'Czechoslovakia', 
+    # 'Yugoslavia', 'Serbia and Montenegro', 'Ethiopia (former)', 
+    # 'Sudan (former)', 'Netherlands Antilles', 'Africa', 'Africa (FAO)', 
+    # 'Americas (FAO)', 'Asia', 'Asia (FAO)', 'Belgium-Luxembourg (FAO)', 
+    # 'Caribbean (FAO)', 'Central America (FAO)', 'Central Asia (FAO)', 
+    # 'Eastern Africa (FAO)', 'Eastern Asia (FAO)', 'Eastern Europe (FAO)', 
+    # 'Europe', 'Europe (FAO)', 'European Union (27)', 'European Union (27) (FAO)', 
+    # 'High-income countries', 'Land Locked Developing Countries (FAO)', 
+    # 'Least Developed Countries (FAO)', 'Low Income Food Deficit Countries (FAO)', 
+    # 'Low-income countries', 'Lower-middle-income countries', 'Micronesia (FAO)', 
+    # 'Middle Africa (FAO)', 'Net Food Importing Developing Countries (FAO)', 
+    # 'Northern Africa (FAO)', 'Northern America (FAO)', 'Northern Europe (FAO)', 
+    # 'Oceania', 'Oceania (FAO)', 'Small Island Developing States (FAO)', 
+    # 'South America', 'South America (FAO)', 'South-eastern Asia (FAO)', 
+    # 'Southern Africa (FAO)', 'Southern Asia (FAO)', 'Southern Europe (FAO)', 
+    # 'Upper-middle-income countries', 'Western Africa (FAO)', 
+    # 'Western Asia (FAO)', 'Western Europe (FAO)', 'American Samoa', 
+    # 'Channel Islands', 'Curacao', 'Faroe Islands', 'Gibraltar', 'Isle of Man', 
+    # 'Not classified', 'St. Martin (French part)', 'Northern Mariana Islands', 
+    # 'Puerto Rico (US)', 'West Bank and Gaza', 'Sint Maarten (Dutch part)', 
+    # 'Turks and Caicos Islands', 'Virgin Islands (U.S.)', 'Brunei', 'Cape Verde', 
+    # 'China (FAO)', 'Democratic Republic of Congo', 'East Timor', 'Hong Kong', 
+    # 'Iran', 'Laos', 'Macao', 'Marshall Islands', 'Micronesia (country)', 
+    # 'North Korea', 'Russia', 'South Korea', 'Syria', 'Taiwan', 'Turkey', 'Tuvalu', 
+    # 'Venezuela', 'Vietnam', 'Bahamas, The', 'Eritrea', 'Micronesia, Fed. Sts.', 
+    # 'St. Kitts and Nevis', 'St. Lucia', 'Liechtenstein', 'Monaco', 
+    # 'Somalia, Fed. Rep.', 'Kosovo', 'Brunei Darussalam', 'Cabo Verde', 
+    # 'Congo, Dem. Rep.', 'Timor-Leste', "Korea, Dem. People's Rep.", 'Lao PDR', 
+    # 'Macao SAR, China', 'Micronesia (Federated States of)', 'Korea, Rep.', 
+    # 'Russian Federation', 'Syrian Arab Republic', 'Türkiye', 'Viet Nam', 
+    # 'Bahamas', 'Curaçao', 'Somalia', 'St. Vincent and the Grenadines', 
+    # 'Venezuela, RB', 'Yemen, Rep.', 'Nauru', 'Guam', 'French Polynesia', 
+    # 'French Guiana', 'Greenland', 'Guadeloupe', 'Martinique', 'New Caledonia', 
+    # 'New Zealand', 'Palau', 'Puerto Rico', 'Réunion', 
+    # 'Saint Martin (French part)', 'Saint Pierre and Miquelon', 'Samoa', 'Tonga', 
+    # 'Wallis and Futuna', 'Åland Islands', 'Anguilla', 'Aruba', 'Bermuda', 
+    # 'British Virgin Islands', 'Cayman Islands', 'Falkland Islands (Malvinas)', 
+    # 'Montserrat', 'Pitcairn', 'Saint Helena, Ascension and Tristan da Cunha', 
+    # 'Western Sahara', 'Mayotte', 'Saint Barthélemy',
+    # 'Latin America & the Caribbean (IDA & IBRD countries)',
+    # 'Middle East, North Africa, Afghanistan & Pakistan (IDA & IBRD)',
+    # 'South Asia (IDA & IBRD)',
+    # 'Sub-Saharan Africa (IDA & IBRD countries)',
+    # 'East Asia & Pacific (IDA & IBRD countries)',
+    # 'Europe & Central Asia (IDA & IBRD countries)'
