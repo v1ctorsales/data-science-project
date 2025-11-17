@@ -19,7 +19,7 @@ def clean_undernourishment():
     df.rename(columns={"Country Name": "country_name"}, inplace=True)
     df.rename(columns={"Country Code": "country_code"}, inplace=True)
 
-    cols_to_keep = ["country_name", "country_code"] + [col for col in df.columns if col.isdigit() and int(col) >= 1999]
+    cols_to_keep = ["country_name", "country_code"] + [col for col in df.columns if col.isdigit() and int(col) >= 2001]
     df = df[cols_to_keep]
     df = df.dropna(how="all", subset=[col for col in df.columns if col != "country_name"])
     df["country_name"] = df["country_name"].str.strip()
