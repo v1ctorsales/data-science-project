@@ -5,7 +5,7 @@ import re
 BASE_DIR = Path(__file__).resolve().parents[1]
 RAW_DIR = BASE_DIR / "data" / "raw"
 PROCESSED_DIR = BASE_DIR / "data" / "processed"
-CROSSWALK = BASE_DIR / "data" / "auxiliary" / "crosswalk_countrynames"
+CROSSWALK = BASE_DIR / "data" / "auxiliary" / "crosswalk_countrynames.csv"
 
 crosswalk = pd.read_csv(CROSSWALK) 
 
@@ -30,10 +30,9 @@ def clean_undernourishment():
 
 ## ------------------------ Consumer Price Index ----------------------- ##
 
-def clean_consumer_price_index():
+def clean_inflation_rate():
     input_path = RAW_DIR / "consumer_price_index.csv"
-    output_path = PROCESSED_DIR / "consumer_price_index_clean.csv"
-    output_path1 = PROCESSED_DIR / "inflation_data.csv"
+    output_path1 = PROCESSED_DIR / "_temp" / "inflation_data.csv"
     output_path2 = PROCESSED_DIR / "mean_inflation_rate.csv"
     output_path3 = PROCESSED_DIR / "max_inflation_shock.csv"
     output_path4 = PROCESSED_DIR / "2025_inflation_rate.csv"
@@ -103,10 +102,7 @@ def clean_consumer_price_index():
     lagged_df['year'] = lagged_df['year'] + 1 
     lagged_df = lagged_df.rename(columns={'value': 'CFPI_t_minus_12'})
 
-    # Merge the two dataframes based on three conditions:
-    # - Same country name
-    # - Same month code (e.g., 7001 for January)
-    # - Current year = lagged year (e.g., year 2022 matched with lagged year 2022)
+    # Merge the two dataframes based on three conditions country name, month code (e.g., 7001 for January), Current year = lagged year (e.g., year 2022 matched with lagged year 2022)
     inflation_data = pd.merge(
         current_df,
         lagged_df,
@@ -126,7 +122,7 @@ def clean_consumer_price_index():
     # Export dataset for manual validation 
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
     inflation_data.to_csv(output_path1, index=False) 
-    print("New clean file saved:", output_path)
+    print("New clean file saved:", output_path1)
 
 ### A. Aggregate historical data (2000-2024)
 
@@ -145,25 +141,25 @@ def clean_consumer_price_index():
         lag_max_food_shock = 'max'
     ).reset_index()
 
-    # Crucial lagging: shift the features from T-1 to align with PoU in T: a shock in 2023 predicts PoU in 2024
-    annual_historical_features['year'] = annual_historical_features['year'] + 1
-    annual_historical_features = annual_historical_features.rename(columns={'year': 'PoU_Target_Year'})
+    # COMMENT OUT IF YOU DECIDE TO RUN A MODEL: Crucial lagging: shift the features from T-1 to align with PoU in T: a shock in 2023 predicts PoU in 2024
+    # annual_historical_features['year'] = annual_historical_features['year'] + 1
+    # annual_historical_features = annual_historical_features.rename(columns={'year': 'PoU_Target_Year'})
 
-    mean_annual_hist_feat= annual_historical_features[['country_name', 'PoU_Target_Year', 'lag_mean_food_inflation']].copy()
-    mean_annual_hist_feat["indicator_name"] = "Mean Food Inflation Rate"
+    mean_infla_rate_historical= annual_historical_features[['country_name', 'year', 'lag_mean_food_inflation']].copy() # PoU_Target_Year
+    mean_infla_rate_historical["indicator_name"] = "Mean Food Inflation Rate"
     
-    max_annual_hist_feat= annual_historical_features[['country_name', 'PoU_Target_Year', 'lag_max_food_shock']].copy()
-    max_annual_hist_feat["indicator_name"] = "Max Food Inflation Shock"
+    max_infla_rate_historical= annual_historical_features[['country_name', 'year', 'lag_max_food_shock']].copy() # PoU_Target_Year
+    max_infla_rate_historical["indicator_name"] = "Max Food Inflation Shock"
 
-    mean_annual_hist_feat_w = mean_annual_hist_feat.pivot(
+    mean_infla_rate_historical_w = mean_infla_rate_historical.pivot(
         index=["country_name", "indicator_name"],
-        columns="PoU_Target_Year",
+        columns="year", # PoU_Target_Year
         values="lag_mean_food_inflation"
     ).reset_index()
 
-    max_annual_hist_feat_w = max_annual_hist_feat.pivot(
+    max_infla_rate_historical_w = max_infla_rate_historical.pivot(
         index=["country_name", "indicator_name"],
-        columns="PoU_Target_Year",
+        columns="year", # PoU_Target_Year
         values="lag_max_food_shock"
     ).reset_index()
 
@@ -173,11 +169,25 @@ def clean_consumer_price_index():
     # year_cols = sorted([c for c in annual_historical_features_wide.columns if isinstance(c, int)])
     # annual_historical_features_wide = annual_historical_features_wide[non_year_cols + year_cols]
 
-    mean_annual_hist_feat_w.to_csv(output_path2, index=False)
+    mean_infla_rate_historical_w = mean_infla_rate_historical_w.merge(
+    crosswalk[['country_name', 'country_code']],
+    left_on='country_name', 
+    right_on='country_name', 
+    how='left'  
+)
+    max_infla_rate_historical_w = max_infla_rate_historical_w.merge(
+    crosswalk[['country_name', 'country_code']],
+    left_on='country_name', 
+    right_on='country_name', 
+    how='left'  
+)
+    
+    mean_infla_rate_historical_w.to_csv(output_path2, index=False)
     print("New clean file saved: ", {output_path2})
 
-    max_annual_hist_feat_w.to_csv(output_path3, index=False)
+    max_infla_rate_historical_w.to_csv(output_path3, index=False)
     print("New clean file saved: ", {output_path3})
+
 
     # ----------------- B. Repeat but with current data - 2025
 
@@ -197,9 +207,9 @@ def clean_consumer_price_index():
     annual_2025_features = annual_2025_features[['country_name', 'year', 'inflation_rate']].copy()
 
     # Lagging: 2025 features will predict the 2026 PoU outcome. This will be done with the snapshot of June 2025 inflation 
-    annual_2025_features['year'] = annual_2025_features['year'] + 1 
+    # annual_2025_features['year'] = annual_2025_features['year'] + 1 
     annual_2025_features = annual_2025_features.rename(columns={
-        'year': 'PoU_Target_Year',
+        # 'year': 'PoU_Target_Year', # PoU_Target_Year
         # CRITICAL: We rename the 'inflation_rate' to match the training feature name
         'inflation_rate': 'lag_mean_food_inflation' 
     })
@@ -212,12 +222,12 @@ def clean_consumer_price_index():
     print(annual_2025_features.head().to_markdown(index=False))
 
     ## Wide format for export
-    annual_2025_features= annual_2025_features[['country_name', 'PoU_Target_Year', 'lag_mean_food_inflation']].copy()
+    annual_2025_features= annual_2025_features[['country_name', 'year', 'lag_mean_food_inflation']].copy() # PoU_Target_Year
     annual_2025_features["indicator_name"] = "Mean Food Inflation Shock"
 
     annual_2025_features_w = annual_2025_features.pivot(
         index=["country_name", "indicator_name"],
-        columns="PoU_Target_Year",
+        columns="year", # PoU_Target_Year
         values="lag_mean_food_inflation"
     ).reset_index()
 
@@ -262,9 +272,10 @@ def clean_energy_supply_adequacy():
     df_wide = df_wide[["country_name"] + year_cols]
 
     df_wide = df_wide.merge(
-    crosswalk,
-    on='country_name', 
-    how='left'  # Critical: Keeps all rows from df_data
+    crosswalk[['country_name', 'country_code']],
+    left_on='country_name', 
+    right_on='country_name', 
+    how='left'  
 )
 
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
@@ -288,17 +299,25 @@ def clean_food_calories():
             country, year, value = clean_line[:3]
             data.append([country.strip(), year.strip(), value.strip()])
 
-    df = pd.DataFrame(data, columns=["country_name", "country_code", "year", "value"])
+    df = pd.DataFrame(data, columns=["country_name", "year", "value"])
 
     df["year"] = pd.to_numeric(df["year"], errors="coerce")
     df["value"] = pd.to_numeric(df["value"], errors="coerce")
 
-    df = df.dropna(subset=["country_name", "country_code", "year", "value"])
+    df = df.dropna(subset=["country_name", "year", "value"])
 
-    df_wide = df.pivot(index=["country_name", "country_code"], columns="year", values="value").reset_index()
+    df_wide = df.pivot(index=["country_name"], columns="year", values="value").reset_index()
+    df_wide.columns = ['country_name'] + [int(col) if isinstance(col, float) else col for col in df_wide.columns[1:]]
 
-    year_cols = sorted([c for c in df_wide.columns if isinstance(c, (int, float))])
-    df_wide = df_wide[["country_name", "country_code"] + year_cols]
+    # year_cols = sorted([c for c in df_wide.columns if isinstance(c, (int, float))])
+    # df_wide = df_wide[["country_name"] + year_cols]
+
+    df_wide = df_wide.merge(
+    crosswalk[['country_name', 'country_code']],
+    left_on='country_name', 
+    right_on='country_name', 
+    how='left'  
+)
 
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
     df_wide.to_csv(output_path, index=False)
