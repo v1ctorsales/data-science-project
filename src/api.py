@@ -103,12 +103,14 @@ def get_countries(request: Request):
 @limiter.limit("40/minute")
 def get_latest_data(request: Request, indicator: str = Query(..., description="Indicator name, e.g. 'undernourishment'")):
     file_map = {
-        "undernourishment": "undernourishment_clean.csv",
-        "food_calories": "food_calories_clean.csv",
-        "energy_supply": "energy_supply_adeq_clean.csv",
+        "mean_inflation": "mean_inflation_rate.csv",
+        "max_inflation": "max_inflation_shock.csv",
         "poverty": "poverty_clean.csv",
+        "undernourishment": "undernourishment_clean.csv",
         "population": "population_clean.csv",
-        "consumer_price": "consumer_price_index_clean.csv",
+        "energy_suply_adeq": "energy_supply_adeq_clean.csv",
+        "food_calories": "food_calories_clean.csv",
+        "gdp": "gdp_percapita_clean.csv",
     }
 
     if indicator not in file_map:
@@ -159,12 +161,14 @@ def get_country_timeseries(
     country: str = Query(..., description="Country name, e.g. 'Brazil'")
 ):
     file_map = {
-        "undernourishment": "undernourishment_clean.csv",
-        "food_calories": "food_calories_clean.csv",
-        "energy_supply": "energy_supply_adeq_clean.csv",
+        "mean_inflation": "mean_inflation_rate.csv",
+        "max_inflation": "max_inflation_shock.csv",
         "poverty": "poverty_clean.csv",
+        "undernourishment": "undernourishment_clean.csv",
         "population": "population_clean.csv",
-        "consumer_price": "consumer_price_index_clean.csv",
+        "energy_suply_adeq": "energy_supply_adeq_clean.csv",
+        "food_calories": "food_calories_clean.csv",
+        "gdp": "gdp_percapita_clean.csv",
     }
 
     if indicator not in file_map:
@@ -205,12 +209,14 @@ def analyze_indicators(
         return {"error": "Only two indicators can be compared at a time."}
 
     file_map = {
-        "undernourishment": "undernourishment_clean.csv",
-        "food_calories": "food_calories_clean.csv",
-        "energy_supply": "energy_supply_adeq_clean.csv",
+        "mean_inflation": "mean_inflation_rate.csv",
+        "max_inflation": "max_inflation_shock.csv",
         "poverty": "poverty_clean.csv",
+        "undernourishment": "undernourishment_clean.csv",
         "population": "population_clean.csv",
-        "consumer_price_index": "consumer_price_index_clean.csv",
+        "energy_suply_adeq": "energy_supply_adeq_clean.csv",
+        "food_calories": "food_calories_clean.csv",
+        "gdp": "gdp_percapita_clean.csv",
     }
 
     dfs = {}
