@@ -411,14 +411,15 @@ def clean_gdp_percapita():
 def merge_cleaned_data():
     output_path = PROCESSED_DIR / "all_data_merged.csv"
 
-    # Lista de arquivos limpos para combinar
     files = [
         "undernourishment_clean.csv",
         "energy_supply_adeq_clean.csv",
         "food_calories_clean.csv",
         "poverty_clean.csv",
         "population_clean.csv",
-        "gdp_percapita.csv"
+        "gdp_percapita_clean.csv",
+        "mean_inflation_rate.csv",
+        "max_inflation_shock.csv"
     ]
 
     dataframes = []
@@ -439,8 +440,7 @@ def merge_cleaned_data():
         year_cols = [col for col in df.columns if re.fullmatch(r"\d{4}", str(col)) and int(col) >= 2001]
         df = df[["country_name"] + year_cols]
 
-        # Adiciona prefixo para evitar colisão de colunas
-        prefix = file.replace("_clean.csv", "")
+        prefix = file.replace(".csv", "").replace("_clean", "")
         df = df.rename(columns={col: f"{prefix}_{col}" for col in year_cols})
 
         dataframes.append(df)
@@ -452,7 +452,7 @@ def merge_cleaned_data():
     # Faz merge incremental em 'country_name'
     merged_df = dataframes[0]
     for df in dataframes[1:]:
-        merged_df = pd.merge(merged_df, df, on=["country_name", "country_code"], how="outer")
+        merged_df = pd.merge(merged_df, df, on="country_name", how="outer")
 
     # Ordena colunas: primeiro 'country_name', depois anos
     cols = ["country_name"] + sorted([c for c in merged_df.columns if c != "country_name"])

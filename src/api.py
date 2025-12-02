@@ -120,7 +120,6 @@ def get_latest_data(request: Request, indicator: str = Query(..., description="I
     if not file_path.exists():
         return {"error": f"Dataset for indicator '{indicator}' not found."}
 
-    # === Leitura e limpeza ===
     df = pd.read_csv(file_path)
     df.columns = [str(c).strip().replace(",", "").replace('"', "") for c in df.columns]
     year_cols = [c for c in df.columns if re.fullmatch(r"\d{4}", c)]
@@ -128,7 +127,6 @@ def get_latest_data(request: Request, indicator: str = Query(..., description="I
     if not year_cols:
         return {"error": f"No year columns found in {file_path.name}"}
 
-    # === Para cada país, pegar o último valor não nulo ===
     latest_records = []
     for _, row in df.iterrows():
         values = {y: row[y] for y in year_cols if pd.notna(row[y])}
