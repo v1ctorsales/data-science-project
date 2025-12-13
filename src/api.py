@@ -50,13 +50,14 @@ def root(request: Request):
 @app.get("/data/{dataset}")
 @limiter.limit("40/minute")
 def get_dataset(
-    request: Request,
-    dataset: str,
-    country: str | None = Query(None, description="Country name (e.g., Brazil)"),
-    start_year: int | None = Query(None, description="Start year (e.g., 2005)"),
-    end_year: int | None = Query(None, description="End year (e.g., 2015)"),
-    indicator: str | None = Query(None, description="Indicator name (if applicable)"),
+        request: Request,
+        dataset: str,
+        country: str | None = Query(None, description="Country name (e.g., Brazil)"),
+        start_year: int | None = Query(None, description="Start year (e.g., 2005)"),
+        end_year: int | None = Query(None, description="End year (e.g., 2015)"),
+        indicator: str | None = Query(None, description="Indicator name (if applicable)"),
 ):
+    # 1. Carrega o dataset principal
     file_path = PROCESSED_DIR / f"{dataset}.csv"
     if not file_path.exists():
         return {"error": f"Dataset '{dataset}' not found."}
@@ -64,28 +65,73 @@ def get_dataset(
     df = pd.read_csv(file_path)
     df.columns = [str(c).lower() for c in df.columns]
 
+    # 2. Filtros principais (País, Indicador)
     if country:
         df = df[df["country_name"].str.lower() == country.lower()]
 
     if indicator and "indicator_name" in df.columns:
         df = df[df["indicator_name"].str.lower().str.contains(indicator.lower())]
 
+    # 3. Filtro de Anos
     year_cols = [col for col in df.columns if col.isdigit()]
     if start_year or end_year:
         start = start_year or min(map(int, year_cols))
         end = end_year or max(map(int, year_cols))
         valid_cols = [
-            "country_name",
-            "indicator_name" if "indicator_name" in df.columns else None,
-        ] + [y for y in year_cols if start <= int(y) <= end]
+                         "country_name",
+                         "indicator_name" if "indicator_name" in df.columns else None,
+                     ] + [y for y in year_cols if start <= int(y) <= end]
         valid_cols = [c for c in valid_cols if c]
         df = df[valid_cols]
 
+    # 4. Limpeza para JSON (Dataset principal)
     df = df.replace({float("nan"): None})
     df = df.where(pd.notnull(df), None)
 
-    return df.to_dict(orient="records")
+    # ---------------------------------------------------------
+    # NOVO BLOCO: Buscar Correlações
+    # ---------------------------------------------------------
+    country_correlations = None  # Padrão caso não haja país ou arquivo
 
+    if country:
+        corr_path = PROCESSED_DIR / "country_indicator_correlation.csv"
+
+        if corr_path.exists():
+            # Carrega o CSV de correlações
+            df_corr = pd.read_csv(corr_path)
+
+            # Filtra pelo país solicitado (insensível a maiúsculas/minúsculas)
+            # Assumindo que o CSV tem uma coluna 'country_name' ou similar (o índice do reset_index)
+            # Se no passo anterior salvamos com index=False, deve haver uma coluna 'country_name'
+            match = df_corr[df_corr['country_name'].str.lower() == country.lower()]
+
+            if not match.empty:
+                # Pega a primeira linha encontrada e converte para dicionário
+                corr_data = match.iloc[0].to_dict()
+
+                # Remove NaN do dicionário de correlação para não quebrar o JSON
+                # (Itera sobre o dict e troca float('nan') por None)
+                cleaned_corr = {}
+                for k, v in corr_data.items():
+                    try:
+                        if np.isnan(v):
+                            cleaned_corr[k] = None
+                        else:
+                            cleaned_corr[k] = v
+                    except:
+                        cleaned_corr[k] = v
+
+                country_correlations = cleaned_corr
+
+    # ---------------------------------------------------------
+    # RETORNO FINAL
+    # ---------------------------------------------------------
+
+    # Atenção: Isso muda o formato da resposta de [{}, {}] para {"data": [], "correlations": {}}
+    return {
+        "data": df.to_dict(orient="records"),
+        "correlations": country_correlations
+    }
 
 
 @app.get("/countries")

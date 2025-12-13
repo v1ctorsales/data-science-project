@@ -3,7 +3,7 @@ import numpy as np
 
 from pathlib import Path
 import matplotlib.pyplot as plt
-import seaborn as sns
+#import seaborn as sns
 
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_squared_error, r2_score
@@ -43,7 +43,7 @@ def correlation():
 
 
     plt.figure(figsize=(12, 10))
-    sns.heatmap(numeric_df.corr(), annot=True, cmap='coolwarm', vmin=-1, vmax=1)
+    #sns.heatmap(numeric_df.corr(), annot=True, cmap='coolwarm', vmin=-1, vmax=1)
     plt.title('Correlation Matrix of Food Security Drivers')
     plt.show()
 
@@ -53,13 +53,6 @@ def correlation():
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
     df_final.to_csv(output_path, index=False) 
     print("New clean file saved:", output_path)
-
-
-import pandas as pd
-import numpy as np
-from sklearn.linear_model import LinearRegression
-from sklearn.metrics import mean_squared_error, r2_score
-from pathlib import Path
 
 
 def regression():
@@ -91,7 +84,7 @@ def regression():
     df_filled['country_name'] = df_sorted['country_name']
 
     #  Cleanup
-    # df_clean = df_filled.dropna()
+    df_clean = df_filled.dropna()
 
     print(f"Original size: {len(df_sorted)}")
     print(f"Final Cleaned size: {len(df_clean)}") 
@@ -134,7 +127,59 @@ def regression():
     r2 = r2_score(y_test, y_pred)
     print(f"\nR-Squared (Accuracy): {r2:.4f}")
 
+FILE_NAME = "long_food_security_data.csv"
+OUTPUT_FILE_NAME = "country_indicator_correlation.csv"
 
+input_path = PROCESSED_DIR / "long_food_security_data.csv"
+
+def calculate_correlation_by_country(
+    min_observations: int = 5,
+    output_file: str = "country_indicator_correlation.csv"
+):
+
+    input_path = PROCESSED_DIR / "long_food_security_data.csv"
+    df = pd.read_csv(input_path)
+
+    target = "undernourishment"
+    features = [
+        "energy_supply_adeq",
+        "gdp_percapita",
+        "poverty",
+        "max_inflation_shock"
+    ]
+
+    required_cols = ["country_name", "year", target] + features
+    df = df[required_cols]
+
+    df = df.dropna()
+
+    def compute_country_correlations(country_df):
+        if len(country_df) < min_observations:
+            return pd.Series({f: np.nan for f in features})
+
+        correlations = {}
+        for feature in features:
+            # Skip if either variable has zero variance
+            if country_df[feature].std() == 0 or country_df[target].std() == 0:
+                correlations[feature] = np.nan
+            else:
+                correlations[feature] = country_df[feature].corr(
+                    country_df[target],
+                    method="pearson"
+                )
+
+        return pd.Series(correlations)
+    correlation_df = (
+        df
+        .groupby("country_name")
+        .apply(compute_country_correlations)
+        .reset_index()
+    )
+
+    output_path = PROCESSED_DIR / output_file
+    correlation_df.to_csv(output_path, index=False)
+
+    print(f"Country-level correlation file saved at: {output_path}")
 
 
 
