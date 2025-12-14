@@ -1,11 +1,11 @@
-# 🌍 Data Science Project – Global Indicators Cleaning & API
+# Global Starvation Map – Data Science Project
 
 This project aims to **process and serve global sustainable development indicators** (such as undernourishment, poverty, energy supply, and consumer prices) for visualization.  
 The pipeline includes data cleaning, standardization, and integration of raw datasets into processed formats accessible via a **Python** FastAPI backend.
 
 ---
 
-## 🧠 Project Structure
+## Project Structure
 
 ```
 data-science-project/
@@ -26,7 +26,7 @@ data-science-project/
 
 ---
 
-## ⚙️ Installation
+## Installation
 
 1. Clone the repository:
 
@@ -52,7 +52,7 @@ pip install -r requirements.txt
 
 ---
 
-## 🧹 Data Cleaning Pipeline
+## Data Cleaning Pipeline
 
 The `src/data_cleaner.py` module contains reusable functions that clean, filter, and standardize each dataset located in the `data/raw/` folder.  
 Each cleaned dataset is saved under `data/processed/`.
@@ -99,7 +99,7 @@ python src/main.py
 
 ---
 
-## 🌐 API Overview
+## API Overview
 
 The API (built with **FastAPI**) serves the cleaned datasets to the frontend.  
 For example, the `/latest` endpoint returns the **most recent value available per country** for a given indicator.
@@ -133,7 +133,7 @@ GET /latest?indicator=undernourishment
 
 ---
 
-## 🚀 Running the API
+## Running the API
 
 To start the server locally:
 
@@ -151,7 +151,7 @@ You’ll see the automatically generated FastAPI Swagger documentation with all 
 
 ---
 
-## 🧾 Requirements
+## Requirements
 
 Your `requirements.txt` file should include at least the following dependencies:
 
@@ -164,13 +164,13 @@ uvicorn
 
 ---
 
-## 🧑‍💻 Authors
+## Authors
 
 **Victor Alves da Silva Sales** and **Valentina Serrano-Muñoz**
 
 ---
 
-## 🪪 License
+## License
 
 This project is distributed under the **MIT License**.  
 You are free to use, modify, and share it with proper attribution to the original author.
