@@ -3,7 +3,7 @@ import numpy as np
 
 from pathlib import Path
 import matplotlib.pyplot as plt
-#import seaborn as sns
+import seaborn as sns
 
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_squared_error, r2_score
@@ -43,7 +43,7 @@ def correlation():
 
 
     plt.figure(figsize=(12, 10))
-    #sns.heatmap(numeric_df.corr(), annot=True, cmap='coolwarm', vmin=-1, vmax=1)
+    sns.heatmap(numeric_df.corr(), annot=True, cmap='coolwarm', vmin=-1, vmax=1)
     plt.title('Correlation Matrix of Food Security Drivers')
     plt.show()
 
