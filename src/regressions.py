@@ -61,6 +61,7 @@ def regression():
 
     # 1. Define Features
     features = [
+        'food_calories',
         'energy_supply_adeq', 
         'gdp_percapita', 
         'poverty',

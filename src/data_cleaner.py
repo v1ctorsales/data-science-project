@@ -1,4 +1,5 @@
 import pandas as pd
+import numpy as np
 from pathlib import Path
 import re
 
@@ -399,11 +400,23 @@ def clean_gdp_percapita():
     df.rename(columns={"Country Code": "country_code"}, inplace=True)
     df.rename(columns={"Indicator Name": "indicator_name"}, inplace=True)
 
-    df = df.drop()
+    # Identify which columns are Metadata vs Data (Years)
+    ids_cols = ['country_name', 'country_code', 'indicator_name', 'indicator_code']
+    # All columns that are NOT in the metadata list are treated as year columns
+    year_cols = [col for col in df.columns if col not in ids_cols]
 
-    PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
+    # 4. Apply Log Transformation ONLY to the year columns
+    # We use df[year_cols] to select just the numbers, apply log, and assign them back
+    df[year_cols] = np.log(df[year_cols])
+
+    # 5. Drop the indicator columns (if you don't need them anymore)
+    df = df.drop(columns=['indicator_name', 'indicator_code'])
+
+    # 6. Save
     df.to_csv(output_path, index=False)
     print("New clean file saved:", output_path)
+    return df
+
 
 
 ## ------------------------ Merge Cleaned Data ----------------------- ##
