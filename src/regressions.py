@@ -56,12 +56,12 @@ def correlation():
 
 
 def regression():
+    
     input_path = PROCESSED_DIR / "long_food_security_data.csv"
     df_final = pd.read_csv(input_path)
 
-    # 1. Define Features
+   # 1. Define Features
     features = [
-        'food_calories',
         'energy_supply_adeq', 
         'gdp_percapita', 
         'poverty',
@@ -69,27 +69,35 @@ def regression():
     ]
     target = 'undernourishment'
 
-    # 2. Sort by Country and Year (Crucial for Forward Fill)
+    # 2. Sort by Country and Year (Crucial for Interpolation)
     df_sorted = df_final.sort_values(by=['country_name', 'year'])
 
-    # 3. Forward Fill (The "Data Science" Fix)
-    # We group by country so we don't accidentally fill Angola's data into Argentina
+    # 3. Robust Imputation (The "Smart" Fix)
     # We select only the columns we care about + the target
     cols_to_fill = features + [target]
     
-    # Create a new dataframe with filled values
-    df_filled = df_sorted.groupby('country_name')[cols_to_fill].ffill()
+    # Define the robust logic: 
+    # A. Fill GAPS (e.g., Mexico 2015..2018) via averaging (Interpolation)
+    # B. Fill TAILS (e.g., 2022..2024) via carrying forward, but capped at 3 years.
+    def robust_fill_strategy(group):
+        # Interpolate inside existing data (limit 5 years gap)
+        group = group.interpolate(method='linear', limit=5, limit_direction='forward')
+        # Forward fill the end, but stop after 3 years to prevent "zombie data"
+        group = group.ffill(limit=3) 
+        return group
 
-    # Add the identifier columns back (Groupby removes them from the columns list)
+    # Apply this logic grouped by country
+    df_filled = df_sorted.groupby('country_name')[cols_to_fill].transform(robust_fill_strategy)
+
+    # Add the identifier columns back
     df_filled['year'] = df_sorted['year']
     df_filled['country_name'] = df_sorted['country_name']
 
-    #  Cleanup
+    # 4. Cleanup (Drop rows that still have gaps after imputation)
     df_clean = df_filled.dropna()
 
     print(f"Original size: {len(df_sorted)}")
     print(f"Final Cleaned size: {len(df_clean)}") 
-    # ^ You should see ~3015 here now.
 
     # ---------------------------------------------------------
     # PART 2: THE REGRESSION (Time Series Split)
@@ -127,6 +135,63 @@ def regression():
     y_pred = model.predict(X_test)
     r2 = r2_score(y_test, y_pred)
     print(f"\nR-Squared (Accuracy): {r2:.4f}")
+
+    # Visualize the Forecast
+
+    plt.figure(figsize=(10, 6))
+    plt.scatter(y_test, y_pred, alpha=0.5, color='green', label='2020-2024 Data')
+    plt.plot([y_test.min(), y_test.max()], [y_test.min(), y_test.max()], 'r--', lw=2, label='Perfect Forecast')
+    plt.xlabel('Actual Undernourishment (%)')
+    plt.ylabel('Predicted Undernourishment (%)')
+    plt.title(f'Forecasting Accuracy: Testing on Years {cutoff_year}+')
+    plt.legend()
+    plt.show()
+
+    # ---------------------------------------------------------
+    # PART 3: VISUALIZATION (Drivers of Hunger)
+    # ---------------------------------------------------------
+    print("\nGenerating Drivers of Hunger Chart...")
+
+    # A. Create DataFrame for plotting
+    coef_df = pd.DataFrame({
+        'Feature': features,
+        'Coefficient': model.coef_
+    })
+
+    # B. Sort by absolute magnitude (impact strength)
+    coef_df = coef_df.sort_values(by='Coefficient', key=abs, ascending=False)
+
+    # C. Assign Colors: Red for Hunger Drivers (+), Green for Hunger Reducers (-)
+    coef_df['Color'] = coef_df['Coefficient'].apply(lambda x: '#d62728' if x > 0 else '#2ca02c')
+
+    # D. Plotting
+    plt.figure(figsize=(10, 6))
+    ax = sns.barplot(
+        data=coef_df,
+        x='Coefficient',
+        y='Feature',
+        palette=coef_df['Color'].tolist()
+    )
+
+    # E. Styling
+    plt.title('Drivers of Undernourishment (Regression Coefficients)', fontsize=14, fontweight='bold')
+    plt.xlabel('Impact on Hunger (Coefficient Strength)', fontsize=12)
+    plt.ylabel('Economic Indicators', fontsize=12)
+    plt.axvline(0, color='black', linewidth=1) # Center line
+    plt.grid(axis='x', linestyle='--', alpha=0.7)
+
+    # F. Add value labels to bars
+    for index, row in enumerate(coef_df.itertuples()):
+        val = row.Coefficient
+        # Place text slightly to the right or left of the bar end
+        offset = val * 0.05 if val != 0 else 0.001
+        ha = 'left' if val > 0 else 'right'
+        plt.text(val + offset, index, f'{val:.4f}', va='center', ha=ha, fontsize=10, fontweight='bold')
+
+    plt.tight_layout()
+    plt.show()
+
+#--------- Country Level Correlation Analysis ---------
 
 FILE_NAME = "long_food_security_data.csv"
 OUTPUT_FILE_NAME = "country_indicator_correlation.csv"
@@ -184,13 +249,3 @@ def calculate_correlation_by_country(
 
 
 
-#     # Visualize the Forecast
-
-#     plt.figure(figsize=(10, 6))
-#     plt.scatter(y_test, y_pred, alpha=0.5, color='green', label='2020-2024 Data')
-#     plt.plot([y_test.min(), y_test.max()], [y_test.min(), y_test.max()], 'r--', lw=2, label='Perfect Forecast')
-#     plt.xlabel('Actual Undernourishment (%)')
-#     plt.ylabel('Predicted Undernourishment (%)')
-#     plt.title(f'Forecasting Accuracy: Testing on Years {cutoff_year}+')
-#     plt.legend()
-#     plt.show()
